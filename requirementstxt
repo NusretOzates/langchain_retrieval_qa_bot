@@ -1,0 +1,7 @@
+langchain[docarray]
+tiktoken
+streamlit
+pypdf
+unstructured
+python-magic
+# For windows python-magic-bin
