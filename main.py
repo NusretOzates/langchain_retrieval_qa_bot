@@ -1,15 +1,26 @@
-import streamlit as st
-from data_loaders import load_text_files, load_pdf_files, load_website, create_index
-from prompts import QUESTION_CREATOR_TEMPLATE
-from memory_loader import load_memory
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts import PromptTemplate
 import os
+
+import streamlit as st
+from langchain.chains import ConversationalRetrievalChain
+from langchain.chat_models import ChatOpenAI
+from langchain.prompts import PromptTemplate
+
+from data_loaders import create_index, load_pdf_files, load_text_files, load_website
+from memory_loader import load_memory
+from prompts import QUESTION_CREATOR_TEMPLATE
 
 
 @st.cache_resource
-def load_chain(file_name: str, file_type: str):
+def load_chain(file_name: str, file_type: str) -> ConversationalRetrievalChain:
+    """Loads the ConversationalRetrievalChain
+
+    Args:
+        file_name: Name of the file
+        file_type: Type of the file
+
+    Returns:
+        A ConversationalRetrievalChain object.
+    """
     if file_type == "text/plain":
         docs = load_text_files([file_name])
     elif file_type == "application/pdf":

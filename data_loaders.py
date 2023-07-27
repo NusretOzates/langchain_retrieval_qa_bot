@@ -1,13 +1,13 @@
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import PyPDFLoader, TextLoader, UnstructuredURLLoader
-from langchain.indexes import VectorstoreIndexCreator
-from langchain.vectorstores import DocArrayInMemorySearch
-from langchain.vectorstores.base import VectorStoreRetriever
-from langchain.docstore.document import Document
-
+import re
 from itertools import chain
 from typing import List
-import re
+
+from langchain.docstore.document import Document
+from langchain.document_loaders import PyPDFLoader, TextLoader, UnstructuredURLLoader
+from langchain.indexes import VectorstoreIndexCreator
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import DocArrayInMemorySearch
+from langchain.vectorstores.base import VectorStoreRetriever
 
 
 def load_text_file(file_path: str) -> Document:
@@ -37,7 +37,7 @@ def load_pdf_file(file_path: str) -> List[Document]:
     return docs
 
 
-def load_website(url: str) -> Document:
+def load_website(url: str) -> List[Document]:
     """Loads a website and returns a Document object.
 
     Args:
@@ -46,7 +46,7 @@ def load_website(url: str) -> Document:
     Returns:
         A Document object.
     """
-    doc = UnstructuredURLLoader(
+    documents = UnstructuredURLLoader(
         [url],
         mode="elements",
         headers={
@@ -57,9 +57,9 @@ def load_website(url: str) -> Document:
     processed_docs = []
 
     # We are not rich, we need to eliminate some of the elements
-    for i in range(len(doc)):
+    for doc in documents:
         # This will make us lose table information sorry about that :(
-        if doc[i].metadata.get("category") not in [
+        if doc.metadata.get("category") not in [
             "NarrativeText",
             "UncategorizedText",
             "Title",
@@ -67,8 +67,8 @@ def load_website(url: str) -> Document:
             continue
 
         # Remove elements with empty links, they are mostly recommended articles etc.
-        if doc[i].metadata.get("links"):
-            link = doc[i].metadata["links"][0]["text"]
+        if doc.metadata.get("links"):
+            link = doc.metadata["links"][0]["text"]
             if link is None:
                 continue
 
@@ -77,17 +77,17 @@ def load_website(url: str) -> Document:
                 continue
 
         # Remove titles with links, they are mostly table of contents or navigation links
-        if doc[i].metadata.get("category") == "Title" and doc[i].metadata.get("links"):
+        if doc.metadata.get("category") == "Title" and doc.metadata.get("links"):
             continue
 
         # Remove extra spaces
-        doc[i].page_content = re.sub(" +", " ", doc[i].page_content)
+        doc.page_content = re.sub(" +", " ", doc.page_content)
 
         # Remove docs with less than 3 words
-        if len(doc[i].page_content.split()) < 3:
+        if len(doc.page_content.split()) < 3:
             continue
 
-        processed_docs.append(doc[i])
+        processed_docs.append(doc)
 
     #  Instead of splitting element-wise, we merge all the elements and split them in chunks
     merged_docs = "\n".join([doc.page_content for doc in processed_docs])
