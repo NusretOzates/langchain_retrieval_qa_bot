@@ -1,17 +1,35 @@
+import json
 import os
+from typing import List
 
 import streamlit as st
 from langchain.chains import ConversationalRetrievalChain
 from langchain.chat_models import ChatOpenAI
+from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
+from langchain.schema import HumanMessage
+from redis import Redis
 
-from data_loaders import create_index, load_pdf_files, load_text_files, load_website
+from data_loaders import create_index, load_pdf_file, load_text_file, load_website
 from memory_loader import load_memory
 from prompts import QUESTION_CREATOR_TEMPLATE
 
 
 @st.cache_resource
-def load_chain(file_name: str, file_type: str) -> ConversationalRetrievalChain:
+def load_redis_connection() -> Redis:
+    """Loads the Redis connection
+
+    Returns:
+        A Redis object.
+    """
+    redis_connection = Redis(host="localhost", port=6379, decode_responses=True)
+    return redis_connection
+
+
+@st.cache_resource
+def load_chain(
+    file_names: List[str], file_types: [str]
+) -> ConversationalRetrievalChain:
     """Loads the ConversationalRetrievalChain
 
     Args:
@@ -21,17 +39,24 @@ def load_chain(file_name: str, file_type: str) -> ConversationalRetrievalChain:
     Returns:
         A ConversationalRetrievalChain object.
     """
-    if file_type == "text/plain":
-        docs = load_text_files([file_name])
-    elif file_type == "application/pdf":
-        docs = load_pdf_files([file_name])
-    elif file_type == "text/html":
-        docs = load_website(file_name)
-    else:
-        st.write("File type is not supported!")
-        st.stop()
+    all_docs = []
+    for file_name, file_type in zip(file_names, file_types):
+        print(file_name, file_type)
 
-    retriever = create_index(docs)
+        if file_type == "text/plain":
+            doc = load_text_file(file_name)
+            all_docs.append(doc)
+        elif file_type == "application/pdf":
+            doc = load_pdf_file(file_name)
+            all_docs.extend(doc)
+        elif file_type == "text/html":
+            doc = load_website(file_name)
+            all_docs.extend(doc)
+        else:
+            st.write("File type is not supported!")
+            st.stop()
+
+    retriever = create_index(all_docs)
     condense_question_prompt = PromptTemplate.from_template(QUESTION_CREATOR_TEMPLATE)
     chain = ConversationalRetrievalChain.from_llm(
         llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0),
@@ -39,49 +64,146 @@ def load_chain(file_name: str, file_type: str) -> ConversationalRetrievalChain:
         condense_question_llm=ChatOpenAI(model_name="gpt-3.5-turbo"),
         condense_question_prompt=condense_question_prompt,
         verbose=True,
+        return_source_documents=True,
     )
 
     return chain
 
 
-os.environ["OPENAI_API_KEY"] = "sk-..."
+os.environ["OPENAI_API_KEY"] = "sk"
 st.set_page_config(layout="wide")
 st.title("💬 QA Chatbot")
 
-# Get a file
-uploaded_file = st.file_uploader("Choose a file", type=["txt", "pdf"])
-st.header("Or you can give a url")
-url = st.text_input("Url to parse")
+redis_connction = load_redis_connection()
+
+username = st.text_input("Username")
 
 
-if uploaded_file is not None or url:
-    if uploaded_file:
-        # Save the file
-        with open(uploaded_file.name, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+def clear_user(username: str):
+    redis_connction.delete(username)
+    redis_connction.delete(f"{username}_filenames")
+    redis_connction.delete(f"{username}_filetypes")
+    redis_connction.delete(f"{username}_memory")
 
-        chain = load_chain(uploaded_file.name, uploaded_file.type)
+
+def save_files(username: str, uploaded_files, uploaded_types):
+    redis_connction.rpush(f"{username}_filenames", *uploaded_files)
+    redis_connction.rpush(f"{username}_filetypes", *uploaded_types)
+
+    redis_connction.expire(f"{username}_filenames", 1800)
+    redis_connction.expire(f"{username}_filetypes", 1800)
+
+
+def get_response(
+    chain: ConversationalRetrievalChain,
+    question: str,
+    memory: ConversationBufferWindowMemory,
+) -> str:
+    response = chain(
+        {
+            "question": question,
+            "chat_history": memory.load_memory_variables({})["history"],
+        }
+    )
+    answer = response["answer"]
+    documents = response["source_documents"]
+    answer += "\n\n" + "\n\n".join([f"Source: {doc.metadata}" for doc in documents])
+
+    return answer
+
+
+if username:
+    st.button("Delete all files", on_click=lambda: clear_user(username))
+    # Check if we have a key for this user
+    if not redis_connction.exists(username) and not redis_connction.exists(
+        f"{username}_filenames"
+    ):
+        # Get a file
+        uploaded_files = st.file_uploader(
+            "Choose a file", type=["txt", "pdf"], accept_multiple_files=True
+        )
+        st.header("Or you can give a url")
+        url = st.text_input("Url to parse")
+
+        if uploaded_files or url != "":
+            # Clear previous files and urls
+            redis_connction.delete(f"{username}_filenames")
+            redis_connction.delete(f"{username}_filetypes")
+
+            if not os.path.exists(username):
+                os.mkdir(username)
+
+            if uploaded_files:
+                for file in uploaded_files:
+                    # Save the file
+                    save_path = os.path.join(username, file.name)
+                    print(f"Saving file to: {save_path}")
+
+                    with open(save_path, "wb") as f:
+                        f.write(file.read())
+
+                names, types = zip(
+                    *[
+                        (os.path.join(username, file.name), file.type)
+                        for file in uploaded_files
+                    ]
+                )
+
+                save_files(username, names, types)
+                chain = load_chain(names, types)
+            else:
+                # Save url to redis
+                save_files(username, [url], ["text/html"])
+                chain = load_chain([url], ["text/html"])
+
+            # Create a new key
+            redis_connction.set(username, 1)
+
     else:
-        chain = load_chain(url, "text/html")
+        # Get the file names and types
+        file_names = redis_connction.lrange(f"{username}_filenames", 0, -1)
+        file_types = redis_connction.lrange(f"{username}_filetypes", 0, -1)
 
+        # Load the chain
+        chain = load_chain(file_names, file_types)
+
+        if not file_names:
+            st.error("Something went wrong! Please refresh the page.")
+            redis_connction.delete(username)
+            redis_connction.delete(f"{username}_filenames")
+            redis_connction.delete(f"{username}_filetypes")
+            st.stop()
+
+        st.info(
+            f"Welcome back! You can continue from where you left off. We loaded your previous files/url: {file_names}"
+        )
+
+    # TODO Handle the case if last_user_message is None (somehow the redis connection is lost etc.)
     # Load the memory
-    memory = load_memory(st)
+    memory, last_user_message = load_memory(redis_connction, username)
 
-    st.write("## 🤖 Chatbot is ready to answer your questions!")
+    for message in memory.load_memory_variables({})["history"]:
+        if isinstance(message, HumanMessage):
+            st.chat_message("user").write(message.content)
+            continue
+        st.chat_message("assistant").write(message.content)
 
     if question := st.chat_input():
         # Get and save the question
-        st.session_state.messages.append({"role": "user", "content": question})
+        redis_connction.rpush(
+            f"{username}_messages", json.dumps({"role": "user", "content": question})
+        )
         st.chat_message("user").write(question)
 
-        # Get an answer using question and the conversation history
-        response = chain(
-            {
-                "question": question,
-                "chat_history": memory.load_memory_variables({})["history"],
-            }
-        )
-        answer = response["answer"]
+        with st.spinner("Thinking..."):
+            # Get an answer using question and the conversation history
+            answer = get_response(chain, question, memory)
+
         # Save the answer
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+        redis_connction.rpush(
+            f"{username}_messages", json.dumps({"role": "assistant", "content": answer})
+        )
         st.chat_message("assistant").write(answer)
+
+        # Expire the messages after 30 mins
+        redis_connction.expire(f"{username}_messages", 1800)
