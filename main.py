@@ -13,6 +13,7 @@ from redis import Redis
 from data_loaders import create_index, load_pdf_file, load_text_file, load_website
 from memory_loader import load_memory
 from prompts import QUESTION_CREATOR_TEMPLATE
+from redis_ops import clear_user, save_files, get_files, add_qa_pair, check_user_exist
 
 
 @st.cache_resource
@@ -74,24 +75,9 @@ os.environ["OPENAI_API_KEY"] = "sk"
 st.set_page_config(layout="wide")
 st.title("💬 QA Chatbot")
 
-redis_connction = load_redis_connection()
+redis_connection = load_redis_connection()
 
 username = st.text_input("Username")
-
-
-def clear_user(username: str):
-    redis_connction.delete(username)
-    redis_connction.delete(f"{username}_filenames")
-    redis_connction.delete(f"{username}_filetypes")
-    redis_connction.delete(f"{username}_memory")
-
-
-def save_files(username: str, uploaded_files, uploaded_types):
-    redis_connction.rpush(f"{username}_filenames", *uploaded_files)
-    redis_connction.rpush(f"{username}_filetypes", *uploaded_types)
-
-    redis_connction.expire(f"{username}_filenames", 1800)
-    redis_connction.expire(f"{username}_filetypes", 1800)
 
 
 def get_response(
@@ -115,9 +101,7 @@ def get_response(
 if username:
     st.button("Delete all files", on_click=lambda: clear_user(username))
     # Check if we have a key for this user
-    if not redis_connction.exists(username) and not redis_connction.exists(
-        f"{username}_filenames"
-    ):
+    if check_user_exist(redis_connection, username):
         # Get a file
         uploaded_files = st.file_uploader(
             "Choose a file", type=["txt", "pdf"], accept_multiple_files=True
@@ -127,8 +111,8 @@ if username:
 
         if uploaded_files or url != "":
             # Clear previous files and urls
-            redis_connction.delete(f"{username}_filenames")
-            redis_connction.delete(f"{username}_filetypes")
+            redis_connection.delete(f"{username}_filenames")
+            redis_connection.delete(f"{username}_filetypes")
 
             if not os.path.exists(username):
                 os.mkdir(username)
@@ -157,30 +141,26 @@ if username:
                 chain = load_chain([url], ["text/html"])
 
             # Create a new key
-            redis_connction.set(username, 1)
+            redis_connection.set(username, 1)
 
     else:
         # Get the file names and types
-        file_names = redis_connction.lrange(f"{username}_filenames", 0, -1)
-        file_types = redis_connction.lrange(f"{username}_filetypes", 0, -1)
-
-        # Load the chain
-        chain = load_chain(file_names, file_types)
+        file_names, file_types = get_files(redis_connection, username)
 
         if not file_names:
             st.error("Something went wrong! Please refresh the page.")
-            redis_connction.delete(username)
-            redis_connction.delete(f"{username}_filenames")
-            redis_connction.delete(f"{username}_filetypes")
+            clear_user(redis_connection, username)
             st.stop()
+
+        # Load the chain
+        chain = load_chain(file_names, file_types)
 
         st.info(
             f"Welcome back! You can continue from where you left off. We loaded your previous files/url: {file_names}"
         )
 
-    # TODO Handle the case if last_user_message is None (somehow the redis connection is lost etc.)
     # Load the memory
-    memory, last_user_message = load_memory(redis_connction, username)
+    memory, last_user_message = load_memory(redis_connection, username)
 
     for message in memory.load_memory_variables({})["history"]:
         if isinstance(message, HumanMessage):
@@ -190,20 +170,12 @@ if username:
 
     if question := st.chat_input():
         # Get and save the question
-        redis_connction.rpush(
-            f"{username}_messages", json.dumps({"role": "user", "content": question})
-        )
         st.chat_message("user").write(question)
 
         with st.spinner("Thinking..."):
             # Get an answer using question and the conversation history
             answer = get_response(chain, question, memory)
 
-        # Save the answer
-        redis_connction.rpush(
-            f"{username}_messages", json.dumps({"role": "assistant", "content": answer})
-        )
         st.chat_message("assistant").write(answer)
 
-        # Expire the messages after 30 mins
-        redis_connction.expire(f"{username}_messages", 1800)
+        add_qa_pair(redis_connection, username, question, answer)
