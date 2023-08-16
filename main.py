@@ -12,7 +12,7 @@ from redis import Redis
 
 from data_loaders import create_index, load_pdf_file, load_text_file, load_website
 from memory_loader import load_memory
-from prompts import QUESTION_CREATOR_TEMPLATE
+from prompts import QUESTION_CREATOR_TEMPLATE, ASSISTANT_PROMPT
 from redis_ops import clear_user, save_files, get_files, add_qa_pair, check_user_exist
 
 
@@ -59,6 +59,9 @@ def load_chain(
 
     retriever = create_index(all_docs)
     condense_question_prompt = PromptTemplate.from_template(QUESTION_CREATOR_TEMPLATE)
+    assistant_prompt = PromptTemplate(
+        template=ASSISTANT_PROMPT, input_variables=["context", "question"]
+    )
     chain = ConversationalRetrievalChain.from_llm(
         llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0),
         retriever=retriever,
@@ -66,6 +69,7 @@ def load_chain(
         condense_question_prompt=condense_question_prompt,
         verbose=True,
         return_source_documents=True,
+        combine_docs_chain_kwargs={"prompt":assistant_prompt},
     )
 
     return chain
@@ -99,7 +103,7 @@ def get_response(
 
 
 if username:
-    st.button("Delete all files", on_click=lambda: clear_user(username))
+    st.button("Delete all files", on_click=lambda: clear_user(redis_connection,username))
     # Check if we have a key for this user
     if check_user_exist(redis_connection, username):
         # Get a file
@@ -133,7 +137,7 @@ if username:
                     ]
                 )
 
-                save_files(username, names, types)
+                save_files(redis_connection, username, names, types)
                 chain = load_chain(names, types)
             else:
                 # Save url to redis
