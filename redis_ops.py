@@ -19,7 +19,7 @@ def clear_user(redis_connection: Redis, username: str):
     redis_connection.delete(username)
     redis_connection.delete(f"{username}_filenames")
     redis_connection.delete(f"{username}_filetypes")
-    redis_connection.delete(f"{username}_memory")
+    redis_connection.delete(f"{username}_messages")
 
 
 def save_files(
