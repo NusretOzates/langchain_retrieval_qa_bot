@@ -1,5 +1,6 @@
 openai
 langchain[docarray]
+faiss-cpu
 tiktoken
 streamlit
 pypdf
