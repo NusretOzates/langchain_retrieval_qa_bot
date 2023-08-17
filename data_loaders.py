@@ -117,7 +117,7 @@ def create_index(docs: List[Document]) -> VectorStoreRetriever:
     index = VectorstoreIndexCreator(
         vectorstore_cls=DocArrayInMemorySearch,
         text_splitter=RecursiveCharacterTextSplitter(
-            chunk_size=1500, chunk_overlap=100
+            chunk_size=3000, chunk_overlap=200
         ),
     ).from_documents(docs)
 
