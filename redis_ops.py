@@ -1,3 +1,5 @@
+import os
+import shutil
 from redis import Redis
 from typing import List, Tuple
 import json
@@ -20,6 +22,10 @@ def clear_user(redis_connection: Redis, username: str):
     redis_connection.delete(f"{username}_filenames")
     redis_connection.delete(f"{username}_filetypes")
     redis_connection.delete(f"{username}_messages")
+
+    # If the user has a folder, delete it
+    if os.path.exists(username):
+        shutil.rmtree(username)
 
 
 def save_files(
