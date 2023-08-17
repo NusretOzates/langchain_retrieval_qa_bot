@@ -23,8 +23,7 @@ def load_redis_connection() -> Redis:
     Returns:
         A Redis object.
     """
-    redis_connection = Redis(host="localhost", port=6379, decode_responses=True)
-    return redis_connection
+    return Redis(host="localhost", port=6379, decode_responses=True)
 
 
 @st.cache_resource
@@ -41,21 +40,22 @@ def load_chain(
         A ConversationalRetrievalChain object.
     """
     all_docs = []
-    for file_name, file_type in zip(file_names, file_types):
-        print(file_name, file_type)
 
-        if file_type == "text/plain":
-            doc = load_text_file(file_name)
-            all_docs.append(doc)
-        elif file_type == "application/pdf":
-            doc = load_pdf_file(file_name)
-            all_docs.extend(doc)
-        elif file_type == "text/html":
-            doc = load_website(file_name)
-            all_docs.extend(doc)
-        else:
-            st.write("File type is not supported!")
-            st.stop()
+    for file_name, file_type in zip(file_names, file_types):
+
+        match file_type:
+            case "text/plain":
+                doc = load_text_file(file_name)
+                all_docs.append(doc)
+            case "application/pdf":
+                doc = load_pdf_file(file_name)
+                all_docs.extend(doc)
+            case "text/html":
+                doc = load_website(file_name)
+                all_docs.extend(doc)
+            case _:
+                st.write("File type is not supported!")
+                st.stop()
 
     retriever = create_index(all_docs)
     condense_question_prompt = PromptTemplate.from_template(QUESTION_CREATOR_TEMPLATE)
@@ -154,6 +154,7 @@ if username:
         if not file_names:
             st.error("Something went wrong! Please refresh the page.")
             clear_user(redis_connection, username)
+            os.removedirs(username)
             st.stop()
 
         # Load the chain
