@@ -1,4 +1,3 @@
-import json
 import os
 from typing import List
 
@@ -7,23 +6,18 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
-from langchain.schema import HumanMessage
-from redis import Redis
 
-from data_loaders import create_index, load_pdf_file, load_text_file, load_website
+
+from data_loaders import create_index, load_pdf_file, load_text_file
 from memory_loader import load_memory
 from prompts import QUESTION_CREATOR_TEMPLATE, ASSISTANT_PROMPT
-from redis_ops import clear_user, save_files, get_files, add_qa_pair, check_user_exist
+from utils import clear_user
 
+# Set logging for the queries
+import logging
 
-@st.cache_resource
-def load_redis_connection() -> Redis:
-    """Loads the Redis connection
-
-    Returns:
-        A Redis object.
-    """
-    return Redis(host="localhost", port=6379, decode_responses=True)
+logging.basicConfig()
+logging.getLogger("langchain.retrievers.multi_query").setLevel(logging.INFO)
 
 
 @st.cache_resource
@@ -49,9 +43,6 @@ def load_chain(
             case "application/pdf":
                 doc = load_pdf_file(file_name)
                 all_docs.extend(doc)
-            case "text/html":
-                doc = load_website(file_name)
-                all_docs.extend(doc)
             case _:
                 st.write("File type is not supported!")
                 st.stop()
@@ -74,14 +65,9 @@ def load_chain(
     return chain
 
 
-os.environ["OPENAI_API_KEY"] = "sk"
+os.environ["OPENAI_API_KEY"] = "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"
 st.set_page_config(layout="wide")
 st.title("💬 QA Chatbot")
-
-redis_connection = load_redis_connection()
-
-username = st.text_input("Username")
-
 
 def get_response(
     chain: ConversationalRetrievalChain,
@@ -101,87 +87,42 @@ def get_response(
     return answer
 
 
-if username:
-    st.button(
-        "Delete all files", on_click=lambda: clear_user(redis_connection, username)
-    )
-    # Check if we have a key for this user
-    if check_user_exist(redis_connection, username):
-        # Get a file
-        uploaded_files = st.file_uploader(
-            "Choose a file", type=["txt", "pdf"], accept_multiple_files=True
-        )
-        st.header("Or you can give a url")
-        url = st.text_input("Url to parse")
 
-        if uploaded_files or url != "":
-            # Clear previous files and urls
-            redis_connection.delete(f"{username}_filenames")
-            redis_connection.delete(f"{username}_filetypes")
+st.button(
+    "Delete all files", on_click=lambda: clear_user("user_files"), help="Delete all files"
+)
 
-            if not os.path.exists(username):
-                os.mkdir(username)
+# Get a file
+uploaded_file = st.file_uploader(
+    "Choose a file", type=["txt", "pdf"], accept_multiple_files=False
+)
 
-            if uploaded_files:
-                for file in uploaded_files:
-                    # Save the file
-                    save_path = os.path.join(username, file.name)
-                    print(f"Saving file to: {save_path}")
+if uploaded_file:
 
-                    with open(save_path, "wb") as f:
-                        f.write(file.read())
+    if not os.path.exists("user_files"):
+        os.mkdir("user_files")
 
-                names, types = zip(
-                    *[
-                        (os.path.join(username, file.name), file.type)
-                        for file in uploaded_files
-                    ]
-                )
+    # Save the file
+    save_path = os.path.join("user_files", uploaded_file.name)
+    print(f"Saving file to: {save_path}")
 
-                save_files(redis_connection, username, names, types)
-                chain = load_chain(names, types)
-            else:
-                # Save url to redis
-                save_files(username, [url], ["text/html"])
-                chain = load_chain([url], ["text/html"])
+    with open(save_path, "wb") as f:
+        f.write(uploaded_file.read())
 
-            # Create a new key
-            redis_connection.set(username, 1)
+    chain = load_chain([os.path.join("user_files",uploaded_file.name)], [uploaded_file.type])
 
-    else:
-        # Get the file names and types
-        file_names, file_types = get_files(redis_connection, username)
 
-        if not file_names:
-            st.error("Something went wrong! Please refresh the page.")
-            clear_user(redis_connection, username)
-            os.removedirs(username)
-            st.stop()
+# Load the memory
+memory = load_memory(st)
 
-        # Load the chain
-        chain = load_chain(file_names, file_types)
+if question := st.chat_input():
+    # Get and save the question
+    st.chat_message("user").write(question)
+    st.session_state.messages.append({"role": "user", "content": question})
 
-        st.info(
-            f"Welcome back! You can continue from where you left off. We loaded your previous files/url: {file_names}"
-        )
+    with st.spinner("Thinking..."):
+        # Get an answer using question and the conversation history
+        answer = get_response(chain, question, memory)
 
-    # Load the memory
-    memory, last_user_message = load_memory(redis_connection, username)
-
-    for message in memory.load_memory_variables({})["history"]:
-        if isinstance(message, HumanMessage):
-            st.chat_message("user").write(message.content)
-            continue
-        st.chat_message("assistant").write(message.content)
-
-    if question := st.chat_input():
-        # Get and save the question
-        st.chat_message("user").write(question)
-
-        with st.spinner("Thinking..."):
-            # Get an answer using question and the conversation history
-            answer = get_response(chain, question, memory)
-
-        st.chat_message("assistant").write(answer)
-
-        add_qa_pair(redis_connection, username, question, answer)
+    st.chat_message("assistant").write(answer)
+    st.session_state.messages.append({"role": "assistant", "content": answer})

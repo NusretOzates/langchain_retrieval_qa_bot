@@ -1,37 +1,27 @@
-import json
-from typing import Optional, Tuple
-
 from langchain.memory import ConversationBufferWindowMemory
-from redis import Redis
 
 
-def load_memory(
-    redis_coonection: Redis, username: str
-) -> Tuple[ConversationBufferWindowMemory, Optional[str]]:
-    """Load memory from redis
+def load_memory(st) -> ConversationBufferWindowMemory:
+    """Load memory from session state
 
     Args:
-        redis_coonection: redis connection
+        st: streamlit object
 
     Returns:
         memory_loader: ConversationBufferMemory object
-        user_message: user message
     """
     memory = ConversationBufferWindowMemory(k=3, return_messages=True)
 
-    messages = redis_coonection.lrange(f"{username}_messages", 0, -1)
-    user_message = ""
-    for index, msg in enumerate(messages):
-        msg = json.loads(msg)
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = [
+            {"role": "assistant", "content": "How can I help you?"}
+        ]
+    for index, msg in enumerate(st.session_state.messages):
+        st.chat_message(msg["role"]).write(msg["content"])
+        if msg["role"] == "user" and index < len(st.session_state.messages) - 1:
+            memory.save_context(
+                {"input": msg["content"]},
+                {"output": st.session_state.messages[index + 1]["content"]},
+            )
 
-        if msg["role"] == "user":
-            user_message = msg["content"]
-            continue
-
-        memory.save_context(
-            {"input": user_message},
-            {"output": msg["content"]},
-        )
-        user_message = ""
-
-    return memory, user_message
+    return memory
