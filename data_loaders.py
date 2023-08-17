@@ -1,4 +1,3 @@
-import os
 import re
 from typing import List
 
@@ -6,8 +5,11 @@ from langchain.docstore.document import Document
 from langchain.document_loaders import PyPDFLoader, TextLoader, UnstructuredURLLoader
 from langchain.indexes import VectorstoreIndexCreator
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS, DocArrayInMemorySearch
-from langchain.vectorstores.base import VectorStoreRetriever
+from langchain.vectorstores import FAISS
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain.chat_models import ChatOpenAI
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
 
 
 def load_text_file(file_path: str) -> Document:
@@ -103,7 +105,7 @@ def load_website(url: str) -> List[Document]:
     return processed_docs
 
 
-def create_index(docs: List[Document]) -> VectorStoreRetriever:
+def create_index(docs: List[Document]) -> ContextualCompressionRetriever:
     """Creates a vectorstore index from a list of Document objects.
 
     Args:
@@ -114,11 +116,24 @@ def create_index(docs: List[Document]) -> VectorStoreRetriever:
         the help of MMR it also tries to find the most diverse document to the given query.
 
     """
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=0)
+    llm = ChatOpenAI()
     index = VectorstoreIndexCreator(
-        vectorstore_cls=DocArrayInMemorySearch,
-        text_splitter=RecursiveCharacterTextSplitter(
-            chunk_size=3000, chunk_overlap=200
-        ),
+        vectorstore_cls=FAISS,
+        text_splitter=splitter,
     ).from_documents(docs)
 
-    return index.vectorstore.as_retriever(search_type="mmr")
+    retriever = MultiQueryRetriever.from_llm(
+        llm=llm,
+        retriever=index.vectorstore.as_retriever(
+            search_type="mmr", search_kwargs={"k": 3, "score_threshold": 0.7}
+        ),
+    )
+
+    compressor = LLMChainExtractor.from_llm(llm)
+    retriever = ContextualCompressionRetriever(
+        base_compressor=compressor, base_retriever=retriever
+    )
+
+    return retriever

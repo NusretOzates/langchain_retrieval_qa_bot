@@ -42,7 +42,6 @@ def load_chain(
     all_docs = []
 
     for file_name, file_type in zip(file_names, file_types):
-
         match file_type:
             case "text/plain":
                 doc = load_text_file(file_name)
@@ -69,7 +68,7 @@ def load_chain(
         condense_question_prompt=condense_question_prompt,
         verbose=True,
         return_source_documents=True,
-        combine_docs_chain_kwargs={"prompt":assistant_prompt},
+        combine_docs_chain_kwargs={"prompt": assistant_prompt},
     )
 
     return chain
@@ -103,7 +102,9 @@ def get_response(
 
 
 if username:
-    st.button("Delete all files", on_click=lambda: clear_user(redis_connection,username))
+    st.button(
+        "Delete all files", on_click=lambda: clear_user(redis_connection, username)
+    )
     # Check if we have a key for this user
     if check_user_exist(redis_connection, username):
         # Get a file
