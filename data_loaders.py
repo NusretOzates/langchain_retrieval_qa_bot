@@ -1,14 +1,14 @@
 from typing import List
 
+from langchain.chat_models import ChatOpenAI
 from langchain.docstore.document import Document
 from langchain.document_loaders import PyPDFLoader, TextLoader
 from langchain.indexes import VectorstoreIndexCreator
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
-from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain.chat_models import ChatOpenAI
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import LLMChainExtractor
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import FAISS
 
 
 def load_text_file(file_path: str) -> List[Document]:
