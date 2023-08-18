@@ -11,7 +11,7 @@ from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import LLMChainExtractor
 
 
-def load_text_file(file_path: str) -> Document:
+def load_text_file(file_path: str) -> List[Document]:
     """Loads a text file and returns a Document object.
 
     Args:
@@ -20,7 +20,7 @@ def load_text_file(file_path: str) -> Document:
     Returns:
         A Document object.
     """
-    doc = TextLoader(file_path, encoding="utf-8").load()[0]
+    doc = TextLoader(file_path, encoding="utf-8").load()
     return doc
 
 
@@ -52,6 +52,7 @@ def create_index(docs: List[Document]) -> ContextualCompressionRetriever:
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
     llm = ChatOpenAI()
+
     index = VectorstoreIndexCreator(
         vectorstore_cls=FAISS,
         text_splitter=splitter,
